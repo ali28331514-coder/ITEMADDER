@@ -1,114 +1,12 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ultimate Toolbox - PackConfig + ZIPFix</title>
-<style>
-  /* نفس الـ CSS من الرد السابق - لتوفير المساحة */
-  @import url('https://fonts.googleapis.com/css2?family=VT323&family=Space+Mono:wght@400;700&display=swap');
-  /* ... كل الـ CSS هنا ... */
-</style>
-</head>
-<body>
-<!-- نفس الـ HTML من الرد السابق -->
-<div class="container">
-  <!-- Header + Tool Selector + PackConfig section -->
-  
-  <!-- ZIPFIX SECTION - محدث -->
-  <div class="tool-section" id="zipfix">
-    <div class="card">
-      <div class="card-title"><span class="icon">🗜</span> ZIP DATE FIXER</div>
-      <div class="upload-zone" id="zipUploadZone">
-        <span class="upload-icon">🗜</span>
-        <div class="upload-text">
-          Drop your <span>ZIP / resource pack</span> here<br>
-          Fixes <span>Error 0x80004005</span> for Windows
-        </div>
-        <input type="file" id="zipFileInput" accept=".zip">
-      </div>
-      <div class="file-selected" id="zipFileSelected">
-        <span>📦</span>
-        <span class="file-name" id="zipFileName">–</span>
-        <span class="file-size" id="zipFileSize">–</span>
-      </div>
-
-      <div class="progress-wrap" id="zipProgressWrap">
-        <div class="progress-label">
-          <span id="zipProgressMsg">Ready</span>
-          <span id="zipProgressPct">0%</span>
-        </div>
-        <div class="progress-bar">
-          <div class="progress-fill" id="zipProgressFill"></div>
-        </div>
-      </div>
-
-      <div class="stats" id="zipStatsEl"></div>
-
-      <div class="error-badge" id="zipErrorBadge"></div>
-      <div class="success-badge" id="zipSuccessBadge"></div>
-
-      <button class="btn-fix" id="fixBtn" disabled>⚡ FIX TIMESTAMPS</button>
-      <button class="btn-download" id="zipDownloadBtn" style="display:none;">⬇ DOWNLOAD FIXED ZIP</button>
-    </div>
-  </div>
-</div>
-
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script>
-// ─── ZIPFIX - الكود الكامل والمختبر ──────────────────────────────────────────
-let zipState = { uploadedFile: null, fixedBlob: null, outName: 'fixed.zip' };
-
-const zipUploadZone = document.getElementById('zipUploadZone');
-const zipFileInput  = document.getElementById('zipFileInput');
-const fixBtn        = document.getElementById('fixBtn');
-const zipDownloadBtn = document.getElementById('zipDownloadBtn');
-
-// Drag & Drop
-zipUploadZone.addEventListener('click', () => zipFileInput.click());
-zipUploadZone.addEventListener('dragover', e => {
-  e.preventDefault();
-  zipUploadZone.classList.add('drag-over');
-});
-zipUploadZone.addEventListener('dragleave', () => {
-  zipUploadZone.classList.remove('drag-over');
-});
-zipUploadZone.addEventListener('drop', e => {
-  e.preventDefault();
-  zipUploadZone.classList.remove('drag-over');
-  const file = e.dataTransfer.files[0];
-  if (file) handleZipFile(file);
-});
-zipFileInput.addEventListener('change', e => {
-  if (e.target.files[0]) handleZipFile(e.target.files[0]);
-});
-
-function handleZipFile(file) {
-  console.log('📦 ZIP file selected:', file.name); // Debug
-  zipState.uploadedFile = file;
-  zipState.fixedBlob = null;
-  zipState.outName = (file.name.replace(/\.[^.]+$/, '') || 'resourcepack') + '_fixed.zip';
-  
-  document.getElementById('zipFileSelected').classList.add('show');
-  document.getElementById('zipFileName').textContent = file.name;
-  document.getElementById('zipFileSize').textContent = formatSize(file.size);
-  
-  // Reset UI
-  document.getElementById('zipStatsEl').classList.remove('show');
-  document.getElementById('zipErrorBadge').classList.remove('show');
-  document.getElementById('zipSuccessBadge').classList.remove('show');
-  zipDownloadBtn.style.display = 'none';
-  
-  fixBtn.disabled = false;
-  fixBtn.textContent = '⚡ FIX TIMESTAMPS';
-}
+// استبدل دالة fixZipTimestamps بهذا الكود الجديد:
 
 fixBtn.addEventListener('click', async () => {
-  console.log('🔧 Starting ZIP fix...'); // Debug
+  console.log('🔧 Starting ZIP fix...', zipState.uploadedFile.name);
+  
   if (!zipState.uploadedFile) return;
   
   fixBtn.disabled = true;
-  fixBtn.innerHTML = '<span class="spinner"></span> PROCESSING...';
+  fixBtn.innerHTML = '<span style="animation:spin 1s linear infinite;border:2px solid #333;border-top:2px solid #fff;width:16px;height:16px;border-radius:50%;display:inline-block;margin-right:8px;"></span>PROCESSING...';
   
   showZipProgress(true);
   hideEl('zipErrorBadge');
@@ -117,138 +15,146 @@ fixBtn.addEventListener('click', async () => {
   zipDownloadBtn.style.display = 'none';
   
   try {
-    setZipProgress(10, 'Reading ZIP file...');
-    await sleep(100);
-    
-    const srcZip = await JSZip.loadAsync(zipState.uploadedFile);
-    const entries = Object.keys(srcZip.files);
-    console.log(`📁 Found ${entries.length} files`); // Debug
-    
-    setZipProgress(20, `Found ${entries.length} files...`);
+    // 🎯 الحل: استخدام checkCRC + lazy loading
+    setZipProgress(5, 'Validating ZIP...');
     await sleep(200);
+    
+    // جرب أولاً الطريقة الآمنة
+    let srcZip;
+    try {
+      srcZip = await JSZip.loadAsync(zipState.uploadedFile, {
+        checkCRC32: true,
+        createFolders: true
+      });
+    } catch (e1) {
+      console.log('⚠️ Strict mode failed, trying relaxed...');
+      // الطريقة المرنة للـ ZIP المعطلة
+      srcZip = await JSZip.loadAsync(zipState.uploadedFile, {
+        checkCRC32: false,
+        createFolders: true,
+        decodeFileName: false
+      });
+    }
+    
+    const entries = Object.keys(srcZip.files);
+    console.log(`📁 Found ${entries.length} files:`, entries.slice(0, 5));
+    
+    setZipProgress(15, `Scanning ${entries.length} files...`);
+    await sleep(300);
     
     const outZip = new JSZip();
     const now = new Date();
     let fixed = 0;
     let skipped = 0;
+    let errors = 0;
     const BAD_YEARS = [1899, 1900, 1970];
     
-    let i = 0;
-    for (const path of entries) {
+    // معالجة كل ملف بأمان
+    for (let i = 0; i < entries.length; i++) {
+      const path = entries[i];
       const entry = srcZip.files[path];
       
-      if (i % 50 === 0 || i === entries.length - 1) {
-        const pct = 20 + Math.floor((i / entries.length) * 60);
-        setZipProgress(pct, `Fixing ${i}/${entries.length} files...`);
-        await sleep(10);
-      }
-      i++;
-      
-      if (entry.dir) {
-        outZip.folder(path);
-        continue;
+      // Progress update
+      if (i % 20 === 0 || i === entries.length - 1) {
+        const pct = 15 + Math.floor((i / entries.length) * 70);
+        setZipProgress(pct, `Processing ${i+1}/${entries.length} files...`);
+        await sleep(5);
       }
       
-      const date = entry.date;
-      const year = date ? date.getFullYear() : 0;
-      const isBad = !date || BAD_YEARS.includes(year) || year < 1980;
-      
-      if (isBad) fixed++;
-      else skipped++;
-      
-      const content = await entry.async('uint8array');
-      outZip.file(path, content, { date: now });
+      try {
+        if (entry.dir) {
+          outZip.folder(path);
+          continue;
+        }
+        
+        // فحص التاريخ
+        const date = entry.date;
+        const year = date ? date.getFullYear() : 0;
+        const isBad = !date || BAD_YEARS.includes(year) || year < 1980 || isNaN(year);
+        
+        if (isBad) fixed++;
+        else skipped++;
+        
+        // قراءة المحتوى بأمان
+        let content;
+        try {
+          content = await entry.async('uint8array');
+        } catch (e2) {
+          console.warn(`⚠️ Skip corrupted file: ${path}`);
+          errors++;
+          continue;
+        }
+        
+        // حفظ مع تاريخ جديد
+        outZip.file(path, content, { 
+          date: now,
+          binary: true,
+          createFolders: true 
+        });
+        
+      } catch (fileError) {
+        console.warn(`⚠️ Error processing ${path}:`, fileError.message);
+        errors++;
+      }
     }
     
-    setZipProgress(85, 'Compressing...');
-    await sleep(200);
+    setZipProgress(88, 'Finalizing ZIP...');
+    await sleep(400);
     
+    // إنشاء الـ ZIP النهائي
     zipState.fixedBlob = await outZip.generateAsync({
       type: 'blob',
       compression: 'DEFLATE',
-      compressionOptions: { level: 6 }
+      compressionOptions: { level: 5 },
+      platform: 'UNIX'
+    }, (update) => {
+      const pct = 88 + Math.floor(update.percent * 0.12);
+      setZipProgress(pct, `Compressing... ${Math.floor(update.percent)}%`);
     });
     
-    setZipProgress(100, '✅ Complete!');
-    await sleep(500);
+    setZipProgress(100, '✅ FIXED!');
+    await sleep(800);
     
-    // Show stats
+    // عرض النتائج
     const statsHtml = `
-      <div class="stat"><span class="label">Total Files</span><span class="value">${entries.length}</span></div>
+      <div class="stat"><span class="label">Files</span><span class="value">${entries.length}</span></div>
       <div class="stat"><span class="label">Fixed</span><span class="value">${fixed}</span></div>
       <div class="stat"><span class="label">OK</span><span class="value">${skipped}</span></div>
-      <div class="stat"><span class="label">Size</span><span class="value">${formatSize(zipState.fixedBlob.size)}</span></div>
+      ${errors ? `<div class="stat"><span class="label">Errors</span><span class="value">${errors}</span></div>` : ''}
+      <div class="stat"><span class="label">Output</span><span class="value">${formatSize(zipState.fixedBlob.size)}</span></div>
     `;
+    
     document.getElementById('zipStatsEl').innerHTML = statsHtml;
     document.getElementById('zipStatsEl').classList.add('show');
     
-    document.getElementById('zipSuccessBadge').textContent = 
-      `✅ Fixed ${fixed} files! Ready for Windows. Output: ${formatSize(zipState.fixedBlob.size)}`;
+    document.getElementById('zipSuccessBadge').innerHTML = 
+      `✅ Success! Fixed <strong>${fixed}</strong> files.<br>
+      ${errors ? `Skipped ${errors} corrupted files.` : ''}<br>
+      <small>Ready for Windows ✓</small>`;
     document.getElementById('zipSuccessBadge').classList.add('show');
     
     zipDownloadBtn.style.display = 'flex';
-    zipDownloadBtn.textContent = `⬇ DOWNLOAD ${zipState.outName}`;
+    zipDownloadBtn.textContent = `⬇ ${zipState.outName}`;
+    
+    console.log('✅ ZIPFix complete!');
     
   } catch (error) {
-    console.error('❌ ZIPFix error:', error); // Debug
+    console.error('❌ Final error:', error);
     setZipProgress(0, '');
-    document.getElementById('zipErrorBadge').textContent = 
-      `❌ Error: ${error.message}. Make sure it's a valid ZIP file.`;
+    
+    let errorMsg = 'Unknown error';
+    if (error.message.includes('uncompressed')) {
+      errorMsg = 'Invalid ZIP structure. Try another file.';
+    } else if (error.message.includes('CRC')) {
+      errorMsg = 'ZIP corrupted. File may be incomplete.';
+    } else {
+      errorMsg = error.message;
+    }
+    
+    document.getElementById('zipErrorBadge').textContent = `❌ ${errorMsg}`;
     document.getElementById('zipErrorBadge').classList.add('show');
   }
   
   fixBtn.disabled = false;
-  fixBtn.textContent = '⚡ FIX TIMESTAMPS';
+  fixBtn.textContent = '⚡ FIX AGAIN';
 });
-
-// Download
-zipDownloadBtn.addEventListener('click', () => {
-  if (!zipState.fixedBlob) return;
-  
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(zipState.fixedBlob);
-  a.download = zipState.outName;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-});
-
-// ─── ZIPFIX HELPERS ──────────────────────────────────────────────────────────
-function setZipProgress(pct, msg) {
-  document.getElementById('zipProgressFill').style.width = pct + '%';
-  document.getElementById('zipProgressPct').textContent = pct + '%';
-  document.getElementById('zipProgressMsg').textContent = msg || '';
-}
-
-function showZipProgress(show) {
-  document.getElementById('zipProgressWrap').classList.toggle('show', show);
-}
-
-function hideEl(id) {
-  document.getElementById(id).classList.remove('show');
-}
-
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-function formatSize(bytes) {
-  if (bytes < 1024) return bytes + ' B';
-  if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
-  return (bytes/1024/1024).toFixed(1) + ' MB';
-}
-
-// ─── Tool Selector (يعمل) ────────────────────────────────────────────────────
-document.querySelectorAll('.tool-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.tool-section').forEach(s => s.classList.remove('active'));
-    
-    btn.classList.add('active');
-    document.getElementById(btn.dataset.tool).classList.add('active');
-  });
-});
-</script>
-</body>
-</html>
