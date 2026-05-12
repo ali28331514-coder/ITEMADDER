@@ -1,160 +1,961 @@
-// استبدل دالة fixZipTimestamps بهذا الكود الجديد:
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PackConfig Generator</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=VT323&family=Space+Mono:wght@400;700&display=swap');
 
-fixBtn.addEventListener('click', async () => {
-  console.log('🔧 Starting ZIP fix...', zipState.uploadedFile.name);
-  
-  if (!zipState.uploadedFile) return;
-  
-  fixBtn.disabled = true;
-  fixBtn.innerHTML = '<span style="animation:spin 1s linear infinite;border:2px solid #333;border-top:2px solid #fff;width:16px;height:16px;border-radius:50%;display:inline-block;margin-right:8px;"></span>PROCESSING...';
-  
-  showZipProgress(true);
-  hideEl('zipErrorBadge');
-  hideEl('zipSuccessBadge');
-  hideEl('zipStatsEl');
-  zipDownloadBtn.style.display = 'none';
-  
-  try {
-    // 🎯 الحل: استخدام checkCRC + lazy loading
-    setZipProgress(5, 'Validating ZIP...');
-    await sleep(200);
-    
-    // جرب أولاً الطريقة الآمنة
-    let srcZip;
-    try {
-      srcZip = await JSZip.loadAsync(zipState.uploadedFile, {
-        checkCRC32: true,
-        createFolders: true
-      });
-    } catch (e1) {
-      console.log('⚠️ Strict mode failed, trying relaxed...');
-      // الطريقة المرنة للـ ZIP المعطلة
-      srcZip = await JSZip.loadAsync(zipState.uploadedFile, {
-        checkCRC32: false,
-        createFolders: true,
-        decodeFileName: false
-      });
-    }
-    
-    const entries = Object.keys(srcZip.files);
-    console.log(`📁 Found ${entries.length} files:`, entries.slice(0, 5));
-    
-    setZipProgress(15, `Scanning ${entries.length} files...`);
-    await sleep(300);
-    
-    const outZip = new JSZip();
-    const now = new Date();
-    let fixed = 0;
-    let skipped = 0;
-    let errors = 0;
-    const BAD_YEARS = [1899, 1900, 1970];
-    
-    // معالجة كل ملف بأمان
-    for (let i = 0; i < entries.length; i++) {
-      const path = entries[i];
-      const entry = srcZip.files[path];
-      
-      // Progress update
-      if (i % 20 === 0 || i === entries.length - 1) {
-        const pct = 15 + Math.floor((i / entries.length) * 70);
-        setZipProgress(pct, `Processing ${i+1}/${entries.length} files...`);
-        await sleep(5);
-      }
-      
-      try {
-        if (entry.dir) {
-          outZip.folder(path);
-          continue;
-        }
-        
-        // فحص التاريخ
-        const date = entry.date;
-        const year = date ? date.getFullYear() : 0;
-        const isBad = !date || BAD_YEARS.includes(year) || year < 1980 || isNaN(year);
-        
-        if (isBad) fixed++;
-        else skipped++;
-        
-        // قراءة المحتوى بأمان
-        let content;
-        try {
-          content = await entry.async('uint8array');
-        } catch (e2) {
-          console.warn(`⚠️ Skip corrupted file: ${path}`);
-          errors++;
-          continue;
-        }
-        
-        // حفظ مع تاريخ جديد
-        outZip.file(path, content, { 
-          date: now,
-          binary: true,
-          createFolders: true 
-        });
-        
-      } catch (fileError) {
-        console.warn(`⚠️ Error processing ${path}:`, fileError.message);
-        errors++;
-      }
-    }
-    
-    setZipProgress(88, 'Finalizing ZIP...');
-    await sleep(400);
-    
-    // إنشاء الـ ZIP النهائي
-    zipState.fixedBlob = await outZip.generateAsync({
-      type: 'blob',
-      compression: 'DEFLATE',
-      compressionOptions: { level: 5 },
-      platform: 'UNIX'
-    }, (update) => {
-      const pct = 88 + Math.floor(update.percent * 0.12);
-      setZipProgress(pct, `Compressing... ${Math.floor(update.percent)}%`);
-    });
-    
-    setZipProgress(100, '✅ FIXED!');
-    await sleep(800);
-    
-    // عرض النتائج
-    const statsHtml = `
-      <div class="stat"><span class="label">Files</span><span class="value">${entries.length}</span></div>
-      <div class="stat"><span class="label">Fixed</span><span class="value">${fixed}</span></div>
-      <div class="stat"><span class="label">OK</span><span class="value">${skipped}</span></div>
-      ${errors ? `<div class="stat"><span class="label">Errors</span><span class="value">${errors}</span></div>` : ''}
-      <div class="stat"><span class="label">Output</span><span class="value">${formatSize(zipState.fixedBlob.size)}</span></div>
-    `;
-    
-    document.getElementById('zipStatsEl').innerHTML = statsHtml;
-    document.getElementById('zipStatsEl').classList.add('show');
-    
-    document.getElementById('zipSuccessBadge').innerHTML = 
-      `✅ Success! Fixed <strong>${fixed}</strong> files.<br>
-      ${errors ? `Skipped ${errors} corrupted files.` : ''}<br>
-      <small>Ready for Windows ✓</small>`;
-    document.getElementById('zipSuccessBadge').classList.add('show');
-    
-    zipDownloadBtn.style.display = 'flex';
-    zipDownloadBtn.textContent = `⬇ ${zipState.outName}`;
-    
-    console.log('✅ ZIPFix complete!');
-    
-  } catch (error) {
-    console.error('❌ Final error:', error);
-    setZipProgress(0, '');
-    
-    let errorMsg = 'Unknown error';
-    if (error.message.includes('uncompressed')) {
-      errorMsg = 'Invalid ZIP structure. Try another file.';
-    } else if (error.message.includes('CRC')) {
-      errorMsg = 'ZIP corrupted. File may be incomplete.';
-    } else {
-      errorMsg = error.message;
-    }
-    
-    document.getElementById('zipErrorBadge').textContent = `❌ ${errorMsg}`;
-    document.getElementById('zipErrorBadge').classList.add('show');
+  :root {
+    --bg: #0a0a0f;
+    --surface: #111118;
+    --surface2: #1a1a24;
+    --border: #2a2a3a;
+    --accent: #00ff88;
+    --accent2: #ff6b35;
+    --accent3: #7c3aed;
+    --text: #e0e0f0;
+    --muted: #666680;
+    --red: #ff4444;
+    --yellow: #ffd700;
   }
-  
-  fixBtn.disabled = false;
-  fixBtn.textContent = '⚡ FIX AGAIN';
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Space Mono', monospace;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Scanlines overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,255,136,0.015) 2px,
+      rgba(0,255,136,0.015) 4px
+    );
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  /* Grid bg */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(0,255,136,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,255,136,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container {
+    position: relative;
+    z-index: 1;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 40px 20px;
+  }
+
+  /* Header */
+  header {
+    text-align: center;
+    margin-bottom: 50px;
+  }
+
+  .logo {
+    font-family: 'VT323', monospace;
+    font-size: 72px;
+    line-height: 1;
+    background: linear-gradient(135deg, var(--accent), var(--accent3));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    letter-spacing: 4px;
+    filter: drop-shadow(0 0 20px rgba(0,255,136,0.4));
+    animation: glow 2s ease-in-out infinite alternate;
+  }
+
+  @keyframes glow {
+    from { filter: drop-shadow(0 0 10px rgba(0,255,136,0.3)); }
+    to   { filter: drop-shadow(0 0 30px rgba(0,255,136,0.7)); }
+  }
+
+  .tagline {
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 6px;
+    text-transform: uppercase;
+    margin-top: 8px;
+  }
+
+  /* Cards */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 28px;
+    margin-bottom: 20px;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.3s;
+  }
+
+  .card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, var(--accent3), var(--accent));
+  }
+
+  .card:hover {
+    border-color: rgba(0,255,136,0.3);
+  }
+
+  .card-title {
+    font-family: 'VT323', monospace;
+    font-size: 22px;
+    color: var(--accent);
+    letter-spacing: 2px;
+    margin-bottom: 18px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .card-title .icon {
+    width: 24px; height: 24px;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(0,255,136,0.1);
+    border: 1px solid rgba(0,255,136,0.3);
+    border-radius: 3px;
+    font-size: 14px;
+  }
+
+  /* Upload zone */
+  .upload-zone {
+    border: 2px dashed var(--border);
+    border-radius: 4px;
+    padding: 50px 30px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s;
+    background: var(--surface2);
+    position: relative;
+  }
+
+  .upload-zone:hover, .upload-zone.drag-over {
+    border-color: var(--accent);
+    background: rgba(0,255,136,0.05);
+  }
+
+  .upload-zone.drag-over {
+    transform: scale(1.01);
+    box-shadow: 0 0 30px rgba(0,255,136,0.2);
+  }
+
+  .upload-icon {
+    font-family: 'VT323', monospace;
+    font-size: 60px;
+    color: var(--accent3);
+    display: block;
+    margin-bottom: 12px;
+    line-height: 1;
+  }
+
+  .upload-text {
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.8;
+  }
+
+  .upload-text span {
+    color: var(--accent);
+    font-weight: 700;
+  }
+
+  #fileInput { display: none; }
+
+  .file-selected {
+    display: none;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 18px;
+    background: rgba(0,255,136,0.08);
+    border: 1px solid rgba(0,255,136,0.3);
+    border-radius: 3px;
+    margin-top: 14px;
+    font-size: 12px;
+  }
+
+  .file-selected.show { display: flex; }
+  .file-name { color: var(--accent); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file-size { color: var(--muted); }
+
+  /* Options */
+  .options-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+
+  @media (max-width: 600px) {
+    .options-grid { grid-template-columns: 1fr; }
+    .logo { font-size: 48px; }
+  }
+
+  .option-group label {
+    display: block;
+    font-size: 10px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+
+  select, input[type="text"] {
+    width: 100%;
+    padding: 10px 14px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--text);
+    font-family: 'Space Mono', monospace;
+    font-size: 12px;
+    outline: none;
+    transition: border-color 0.2s;
+    appearance: none;
+    -webkit-appearance: none;
+  }
+
+  select {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%2300ff88' d='M6 8L0 0h12z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    padding-right: 30px;
+    cursor: pointer;
+  }
+
+  select:focus, input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(0,255,136,0.1);
+  }
+
+  /* Button */
+  .btn-generate {
+    width: 100%;
+    padding: 16px;
+    background: linear-gradient(135deg, var(--accent3), var(--accent));
+    border: none;
+    border-radius: 3px;
+    color: #000;
+    font-family: 'VT323', monospace;
+    font-size: 26px;
+    letter-spacing: 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+    overflow: hidden;
+    margin-top: 6px;
+  }
+
+  .btn-generate:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 30px rgba(0,255,136,0.4);
+  }
+
+  .btn-generate:active { transform: translateY(0); }
+
+  .btn-generate:disabled {
+    background: var(--border);
+    color: var(--muted);
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+  }
+
+  .btn-generate .loading {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+
+  .btn-generate.loading-state .label { display: none; }
+  .btn-generate.loading-state .loading { display: flex; }
+
+  .spinner {
+    width: 16px; height: 16px;
+    border: 2px solid rgba(0,0,0,0.3);
+    border-top-color: #000;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Progress */
+  .progress-bar {
+    height: 3px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+    margin: 16px 0;
+    display: none;
+  }
+
+  .progress-bar.show { display: block; }
+
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent3), var(--accent));
+    border-radius: 2px;
+    transition: width 0.4s ease;
+    width: 0%;
+  }
+
+  /* Status log */
+  .log-container {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 14px;
+    font-size: 11px;
+    line-height: 2;
+    max-height: 180px;
+    overflow-y: auto;
+    display: none;
+    font-family: 'Space Mono', monospace;
+  }
+
+  .log-container.show { display: block; }
+  .log-container::-webkit-scrollbar { width: 4px; }
+  .log-container::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .log-line { display: flex; gap: 10px; }
+  .log-line .ts { color: var(--muted); flex-shrink: 0; }
+  .log-line.ok .msg { color: var(--accent); }
+  .log-line.err .msg { color: var(--red); }
+  .log-line.info .msg { color: var(--yellow); }
+  .log-line.normal .msg { color: var(--text); }
+
+  /* Output */
+  .output-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 0;
+  }
+
+  .tab-btn {
+    padding: 10px 18px;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--muted);
+    font-family: 'Space Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.2s;
+    margin-bottom: -1px;
+  }
+
+  .tab-btn.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+
+  .tab-btn:hover { color: var(--text); }
+
+  .tab-content {
+    display: none;
+    position: relative;
+  }
+  .tab-content.active { display: block; }
+
+  .code-block {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-top: none;
+    border-radius: 0 0 3px 3px;
+    padding: 16px;
+    font-size: 11px;
+    line-height: 1.8;
+    white-space: pre-wrap;
+    overflow-x: auto;
+    max-height: 400px;
+    overflow-y: auto;
+    color: #c9d1d9;
+  }
+
+  .code-block::-webkit-scrollbar { width: 4px; height: 4px; }
+  .code-block::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  /* Syntax colors */
+  .yaml-key { color: #79c0ff; }
+  .yaml-val { color: #a5d6ff; }
+  .yaml-str { color: #a8ff78; }
+  .yaml-bool { color: #ff9f43; }
+  .yaml-num { color: #ffd700; }
+  .yaml-comment { color: #6a737d; font-style: italic; }
+
+  .btn-copy, .btn-download {
+    position: absolute;
+    top: 10px; right: 10px;
+    padding: 6px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--muted);
+    font-family: 'Space Mono', monospace;
+    font-size: 10px;
+    cursor: pointer;
+    transition: all 0.2s;
+    letter-spacing: 1px;
+  }
+
+  .btn-copy { right: 100px; }
+
+  .btn-copy:hover, .btn-download:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .btn-zip {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    width: 100%;
+    padding: 14px;
+    background: transparent;
+    border: 2px solid var(--accent);
+    border-radius: 3px;
+    color: var(--accent);
+    font-family: 'VT323', monospace;
+    font-size: 22px;
+    letter-spacing: 4px;
+    cursor: pointer;
+    transition: all 0.25s;
+    margin-top: 14px;
+  }
+
+  .btn-zip:hover {
+    background: rgba(0,255,136,0.1);
+    box-shadow: 0 0 20px rgba(0,255,136,0.25);
+    transform: translateY(-1px);
+  }
+
+  .btn-zip:active { transform: translateY(0); }
+
+  .output-section { display: none; }
+  .output-section.show { display: block; }
+
+  /* Stats bar */
+  .stats {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+    padding: 14px 18px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    margin-bottom: 16px;
+  }
+
+  .stat { font-size: 11px; }
+  .stat .label { color: var(--muted); }
+  .stat .value { color: var(--accent); font-weight: 700; margin-left: 6px; }
+
+  /* Footer */
+  footer {
+    text-align: center;
+    margin-top: 60px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 2px;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <div class="logo">PACKCONFIG</div>
+    <p class="tagline">Minecraft Resource Pack → ItemsAdder Config Generator</p>
+  </header>
+
+  <!-- Upload -->
+  <div class="card">
+    <div class="card-title"><span class="icon">📦</span> UPLOAD RESOURCE PACK</div>
+    <div class="upload-zone" id="uploadZone">
+      <span class="upload-icon">▲</span>
+      <div class="upload-text">
+        Drop your resource pack here<br>
+        <span>.zip</span> or <span>any format</span> — or <span>click to browse</span>
+      </div>
+      <input type="file" id="fileInput">
+    </div>
+    <div class="file-selected" id="fileSelected">
+      <span>📦</span>
+      <span class="file-name" id="fileName">–</span>
+      <span class="file-size" id="fileSize">–</span>
+    </div>
+  </div>
+
+  <!-- Options -->
+  <div class="card">
+    <div class="card-title"><span class="icon">⚙</span> CONFIG OPTIONS</div>
+    <div class="options-grid">
+      <div class="option-group">
+        <label>Plugin</label>
+        <select id="pluginType">
+          <option value="itemsadder">ItemsAdder 1.21.2+</option>
+          <option value="itemsadder_old">ItemsAdder 1.20.1-</option>
+          <option value="oraxen">Oraxen</option>
+        </select>
+      </div>
+      <div class="option-group">
+        <label>Namespace</label>
+        <input type="text" id="namespace" placeholder="e.g. my_pack" spellcheck="false">
+      </div>
+      <div class="option-group">
+        <label>Pack Name</label>
+        <input type="text" id="packName" placeholder="e.g. My Weapon Set" spellcheck="false">
+      </div>
+      <div class="option-group">
+        <label>Item Prefix</label>
+        <input type="text" id="prefix" placeholder="e.g. my_pack_" spellcheck="false">
+      </div>
+    </div>
+  </div>
+
+  <!-- Generate button -->
+  <button class="btn-generate" id="generateBtn" disabled>
+    <span class="label">⚡ GENERATE CONFIG</span>
+    <span class="loading"><span class="spinner"></span> PROCESSING...</span>
+  </button>
+
+  <!-- Progress & Log -->
+  <div class="progress-bar" id="progressBar">
+    <div class="progress-fill" id="progressFill"></div>
+  </div>
+  <div class="log-container" id="logContainer"></div>
+
+  <!-- Output -->
+  <div class="output-section" id="outputSection">
+    <div class="card" style="margin-top:20px;">
+      <div class="card-title"><span class="icon">✓</span> GENERATED CONFIG</div>
+
+      <div class="stats" id="statsBar"></div>
+
+      <div class="output-tabs" id="outputTabs"></div>
+
+      <div id="tabContents"></div>
+
+      <button class="btn-zip" id="downloadZipBtn">
+        ⬇ DOWNLOAD ALL AS ZIP
+      </button>
+    </div>
+  </div>
+
+  <footer>PACKCONFIG v1.0 · Made for Minecraft · ItemsAdder / Oraxen</footer>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+// ─── State ───────────────────────────────────────────────────────────────────
+let uploadedZip = null;
+let generatedFiles = {};
+
+// ─── Upload ──────────────────────────────────────────────────────────────────
+const uploadZone = document.getElementById('uploadZone');
+const fileInput  = document.getElementById('fileInput');
+const generateBtn = document.getElementById('generateBtn');
+
+uploadZone.addEventListener('click', () => fileInput.click());
+uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('drag-over'); });
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag-over'));
+uploadZone.addEventListener('drop', e => {
+  e.preventDefault();
+  uploadZone.classList.remove('drag-over');
+  if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
 });
+fileInput.addEventListener('change', () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); });
+
+async function handleFile(file) {
+  // Accept any file - try to parse as ZIP regardless of extension
+  document.getElementById('fileSelected').classList.add('show');
+  document.getElementById('fileName').textContent = file.name;
+  document.getElementById('fileSize').textContent = formatSize(file.size);
+
+  // Auto-fill namespace from filename (strip any extension)
+  const baseName = file.name.replace(/\.[^.]+$/,'').replace(/[^a-z0-9_]/gi,'_').toLowerCase() || 'my_pack';
+  if (!document.getElementById('namespace').value) document.getElementById('namespace').value = baseName;
+  if (!document.getElementById('prefix').value)    document.getElementById('prefix').value = baseName + '_';
+  if (!document.getElementById('packName').value)  document.getElementById('packName').value = file.name.replace(/\.[^.]+$/,'').replace(/_/g,' ') || 'My Pack';
+
+  uploadedZip = file;
+  generateBtn.disabled = false;
+}
+
+// ─── Generate ─────────────────────────────────────────────────────────────────
+generateBtn.addEventListener('click', generate);
+
+async function generate() {
+  if (!uploadedZip) return;
+  generatedFiles = {};
+  generateBtn.disabled = true;
+  generateBtn.classList.add('loading-state');
+  document.getElementById('outputSection').classList.remove('show');
+
+  const logEl = document.getElementById('logContainer');
+  const progressBar = document.getElementById('progressBar');
+  const progressFill = document.getElementById('progressFill');
+  logEl.innerHTML = '';
+  logEl.classList.add('show');
+  progressBar.classList.add('show');
+  progressFill.style.width = '0%';
+
+  const namespace = document.getElementById('namespace').value || 'my_pack';
+  const packName  = document.getElementById('packName').value  || 'My Pack';
+  const prefix    = document.getElementById('prefix').value    || namespace + '_';
+  const plugin    = document.getElementById('pluginType').value;
+
+  function log(msg, type='normal') {
+    const ts = new Date().toLocaleTimeString('en',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    logEl.innerHTML += `<div class="log-line ${type}"><span class="ts">[${ts}]</span><span class="msg">${msg}</span></div>`;
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function progress(p) { progressFill.style.width = p + '%'; }
+
+  try {
+    log('Reading ZIP file...', 'info');
+    progress(10);
+    await sleep(200);
+
+    const zip = await JSZip.loadAsync(uploadedZip);
+    const files = Object.keys(zip.files);
+    log(`Found ${files.length} files in archive`, 'ok');
+    progress(20);
+    await sleep(150);
+
+    // ── Detect items ────────────────────────────────────────────────────────
+    log('Scanning for models and textures...', 'info');
+    await sleep(200);
+
+    const modelFiles    = files.filter(f => f.includes('/models/') && f.endsWith('.json') && !f.includes('/item/'));
+    const textureFiles  = files.filter(f => f.endsWith('.png') && !f.includes('mcmeta'));
+    const armorTextures = textureFiles.filter(f => f.includes('/armor/') || f.includes('/armors/'));
+    const animatedFiles = textureFiles.filter(f => f.includes('/animated/'));
+    const iconFiles     = textureFiles.filter(f => f.includes('/icon/'));
+
+    log(`Models: ${modelFiles.length} | Textures: ${textureFiles.length} | Armor: ${armorTextures.length}`, 'normal');
+    progress(35);
+    await sleep(200);
+
+    // ── Parse item names from model files ──────────────────────────────────
+    const items = [];
+    const seenNames = new Set();
+
+    for (const f of modelFiles) {
+      const filename = f.split('/').pop().replace('.json','');
+      // Skip variants (bow_0, bow_1, crossbow_0, etc. and shield_blocking, fishing_rod_cast, trident_throwing, wings_cosmetic*)
+      if (/_(0|1|2|charged|firework|blocking|cast|throwing|cosmetic|cosmetic_normal_2|cosmetic_self|cosmetic_self_2)$/.test(filename)) continue;
+      if (seenNames.has(filename)) continue;
+      seenNames.add(filename);
+
+      const item = detectItem(filename);
+      items.push({ name: filename, ...item });
+      log(`  + Detected: ${filename} → ${item.material}`, 'normal');
+    }
+
+    progress(55);
+    await sleep(200);
+
+    // ── Detect armor pieces ────────────────────────────────────────────────
+    const armorPieces = [];
+    const armorSlots = ['helmet','chestplate','leggings','boots'];
+    for (const slot of armorSlots) {
+      const iconTex = armorTextures.find(f => f.toLowerCase().includes(`_${slot}_icon`));
+      if (iconTex || textureFiles.find(f => f.toLowerCase().includes(`_${slot}`))) {
+        armorPieces.push(slot);
+      }
+    }
+
+    const hasArmor = armorPieces.length > 0 || armorTextures.some(f => f.includes('layer_1'));
+
+    // ── Detect cosmetics ───────────────────────────────────────────────────
+    const cosmeticModels = modelFiles.filter(f => {
+      const fn = f.split('/').pop().replace('.json','');
+      return fn.includes('cosmetic') || fn.includes('wings_cosmetic');
+    });
+
+    log(`Armor pieces: ${hasArmor ? armorPieces.join(', ') : 'none'}`, 'normal');
+    log(`Cosmetic models: ${cosmeticModels.length}`, 'normal');
+    progress(70);
+    await sleep(200);
+
+    // ── Generate YMLs ──────────────────────────────────────────────────────
+    log('Generating YAML configs...', 'info');
+    await sleep(150);
+
+    if (plugin === 'itemsadder' || plugin === 'itemsadder_old') {
+      generatedFiles = generateItemsAdder(namespace, packName, prefix, items, hasArmor, armorPieces, cosmeticModels);
+    } else {
+      generatedFiles = generateOraxen(namespace, packName, prefix, items, hasArmor, armorPieces);
+    }
+
+    progress(90);
+    await sleep(200);
+    log('Config generation complete!', 'ok');
+    progress(100);
+    await sleep(300);
+
+    // ── Show output ────────────────────────────────────────────────────────
+    renderOutput(items, armorPieces, cosmeticModels);
+
+  } catch(err) {
+    log('Error: ' + err.message, 'err');
+    console.error(err);
+  }
+
+  generateBtn.disabled = false;
+  generateBtn.classList.remove('loading-state');
+}
+
+// ─── Item Detection ──────────────────────────────────────────────────────────
+function detectItem(name) {
+  const n = name.toLowerCase();
+  if (n.includes('sword'))       return { material:'NETHERITE_SWORD',    displayName: toTitle(name) };
+  if (n.includes('axe'))         return { material:'NETHERITE_AXE',      displayName: toTitle(name) };
+  if (n.includes('pickaxe'))     return { material:'NETHERITE_PICKAXE',  displayName: toTitle(name) };
+  if (n.includes('shovel'))      return { material:'NETHERITE_SHOVEL',   displayName: toTitle(name) };
+  if (n.includes('hoe'))         return { material:'NETHERITE_HOE',      displayName: toTitle(name) };
+  if (n.includes('bow'))         return { material:'BOW',                displayName: toTitle(name) };
+  if (n.includes('crossbow'))    return { material:'CROSSBOW',           displayName: toTitle(name) };
+  if (n.includes('fishing'))     return { material:'FISHING_ROD',        displayName: toTitle(name) };
+  if (n.includes('trident'))     return { material:'TRIDENT',            displayName: toTitle(name) };
+  if (n.includes('shield'))      return { material:'SHIELD',             displayName: toTitle(name) };
+  if (n.includes('hammer'))      return { material:'NETHERITE_SWORD',    displayName: toTitle(name) };
+  if (n.includes('spear'))       return { material:'NETHERITE_SWORD',    displayName: toTitle(name) };
+  if (n.includes('scythe'))      return { material:'NETHERITE_SWORD',    displayName: toTitle(name) };
+  if (n.includes('staff'))       return { material:'NETHERITE_SWORD',    displayName: toTitle(name) };
+  if (n.includes('mace'))        return { material:'NETHERITE_SWORD',    displayName: toTitle(name) };
+  if (n.includes('helmet') || n.includes('hat')) return { material:'PAPER', displayName: toTitle(name), isHat:true };
+  if (n.includes('wings'))       return { material:'PAPER',              displayName: toTitle(name), isHat:true };
+  if (n.includes('chest') && !n.includes('plate')) return { material:'PAPER', displayName: toTitle(name), isFurniture:true };
+  if (n.includes('key'))         return { material:'PAPER',              displayName: toTitle(name) };
+  return                                { material:'PAPER',              displayName: toTitle(name) };
+}
+
+// ─── ItemsAdder Generator ────────────────────────────────────────────────────
+function generateItemsAdder(namespace, packName, prefix, items, hasArmor, armorPieces, cosmeticModels) {
+  const files = {};
+
+  // ── Main items yml ──────────────────────────────────────────────────────
+  let yml = `info:\n  namespace: ${namespace}\nitems:\n`;
+  for (const item of items) {
+    const id = prefix + item.name;
+    yml += `  ${id}:\n`;
+    if (item.isFurniture) {
+      yml += `    behaviours:\n      furniture:\n        entity: item_frame\n        fixed_rotation: false\n        hitbox:\n          height: 1\n          height_offset: 0\n          length: 1\n          length_offset: 0\n          width: 1\n          width_offset: 0\n        placeable_on:\n          ceiling: false\n          floor: true\n          walls: false\n        solid: false\n`;
+    }
+    if (item.isHat) {
+      yml += `    attribute_modifiers:\n      head:\n        armor: 2\n    behaviours:\n      hat: true\n    durability:\n      max_custom_durability: 165\n`;
+    }
+    yml += `    display_name: ${item.displayName}\n`;
+    yml += `    permission: ${namespace}.${item.name}\n`;
+    yml += `    resource:\n      generate: false\n`;
+    if (item.name === 'trident') yml += `      icon: icon/trident\n`;
+    yml += `      material: ${item.material}\n      model_path: ${item.name}\n`;
+  }
+  files['configs/' + namespace + '.yml'] = yml;
+
+  // ── Armor yml ───────────────────────────────────────────────────────────
+  if (hasArmor && armorPieces.length > 0) {
+    const armorId = namespace + 'armor';
+    let armYml = `equipments:\n  ${armorId}:\n    layer_1: armor/${namespace}_armor_layer_1\n    layer_2: armor/${namespace}_armor_layer_2\ninfo:\n  namespace: ${namespace}\nitems:\n`;
+    const armorStats = { helmet:{slot:'HEAD',armor:2,dur:165}, chestplate:{slot:'CHEST',armor:6,dur:240}, leggings:{slot:'LEGS',armor:5,dur:180}, boots:{slot:'FEET',armor:2,dur:165} };
+    const matMap = { helmet:'NETHERITE_HELMET', chestplate:'NETHERITE_CHESTPLATE', leggings:'NETHERITE_LEGGINGS', boots:'NETHERITE_BOOTS' };
+    for (const piece of armorPieces) {
+      const s = armorStats[piece] || {slot:'HEAD',armor:2,dur:165};
+      armYml += `  ${namespace}${piece}:\n    attribute_modifiers:\n      ${s.slot === 'HEAD' ? 'head' : s.slot === 'CHEST' ? 'chest' : s.slot === 'LEGS' ? 'legs' : 'feet'}:\n        armor: ${s.armor}\n    display_name: ${toTitle(piece)}\n    durability:\n      max_custom_durability: ${s.dur}\n    equipment:\n      id: ${armorId}\n      slot: ${s.slot}\n    permission: ${namespace}.${piece}\n    resource:\n      generate: true\n      material: ${matMap[piece] || 'NETHERITE_HELMET'}\n      textures:\n      - armor/${namespace}_${piece}_icon.png\n`;
+    }
+    files['configs/' + namespace + '_armor.yml'] = armYml;
+  }
+
+  // ── Category yml ────────────────────────────────────────────────────────
+  let catYml = `info:\n  namespace: ${namespace}\ncategories:\n  ${namespace}:\n    name: ${packName}\n    enabled: true\n    icon: ${namespace}:${prefix}${items.find(i=>i.name.includes('sword') || i.name.includes('wings'))?.name || items[0]?.name}\n    permission: ia.menu.${namespace}\n    items:\n`;
+  if (hasArmor) {
+    for (const p of armorPieces) catYml += `    - ${namespace}:${namespace}${p}\n`;
+  }
+  for (const item of items) catYml += `    - ${namespace}:${prefix}${item.name}\n`;
+  files['configs/' + namespace + '_category.yml'] = catYml;
+
+  // ── Cosmetic yml ────────────────────────────────────────────────────────
+  if (cosmeticModels.length > 0) {
+    let cosYml = `info:\n  namespace: ${namespace}\nitems:\n`;
+    let modelIdBase = 9926731;
+    for (const cm of cosmeticModels) {
+      const fn = cm.split('/').pop().replace('.json','');
+      const id = prefix + 'cosmetics_' + fn.replace('_cosmetic','').replace('_normal_2','_n2').replace('_self_2','_s2');
+      cosYml += `  ${id}:\n    display_name: ${toTitle(fn)}\n    permission: ${namespace}.${id}\n    resource:\n      generate: false\n      material: POTION\n      model_id: ${modelIdBase++}\n      model_path: ${fn}\n`;
+    }
+    files['configs/' + namespace + '_cosmetic.yml'] = cosYml;
+  }
+
+  return files;
+}
+
+// ─── Oraxen Generator ────────────────────────────────────────────────────────
+function generateOraxen(namespace, packName, prefix, items, hasArmor, armorPieces) {
+  const files = {};
+
+  let yml = `# ${packName} - Oraxen Config\n# Generated by PackConfig\n\n`;
+  for (const item of items) {
+    const id = prefix + item.name;
+    yml += `${id}:\n  displayname: "<white>${item.displayName}"\n  material: ${item.material}\n  Pack:\n    generate_model: false\n    model: ${namespace}/${item.name}\n    textures:\n      - ${namespace}/${item.name}\n`;
+    if (item.name === 'trident') yml += `    custom_model_data: true\n`;
+    yml += `\n`;
+  }
+  files['configs/' + namespace + '_items.yml'] = yml;
+
+  return files;
+}
+
+// ─── Render Output ────────────────────────────────────────────────────────────
+function renderOutput(items, armorPieces, cosmeticModels) {
+  const statsBar = document.getElementById('statsBar');
+  statsBar.innerHTML = `
+    <div class="stat"><span class="label">Items</span><span class="value">${items.length}</span></div>
+    <div class="stat"><span class="label">Armor</span><span class="value">${armorPieces.length}</span></div>
+    <div class="stat"><span class="label">Cosmetics</span><span class="value">${cosmeticModels.length}</span></div>
+    <div class="stat"><span class="label">Config Files</span><span class="value">${Object.keys(generatedFiles).length}</span></div>
+  `;
+
+  const tabsEl    = document.getElementById('outputTabs');
+  const contentsEl = document.getElementById('tabContents');
+  tabsEl.innerHTML = '';
+  contentsEl.innerHTML = '';
+
+  const fileNames = Object.keys(generatedFiles);
+  fileNames.forEach((name, i) => {
+    const tabBtn = document.createElement('button');
+    tabBtn.className = 'tab-btn' + (i===0?' active':'');
+    tabBtn.textContent = name.split('/').pop();
+    tabBtn.onclick = () => {
+      document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c=>c.classList.remove('active'));
+      tabBtn.classList.add('active');
+      document.getElementById('tc-'+i).classList.add('active');
+    };
+    tabsEl.appendChild(tabBtn);
+
+    const content = document.createElement('div');
+    content.className = 'tab-content' + (i===0?' active':'');
+    content.id = 'tc-'+i;
+
+    const code = document.createElement('pre');
+    code.className = 'code-block';
+    code.innerHTML = syntaxHighlight(generatedFiles[name]);
+
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'btn-copy';
+    copyBtn.textContent = 'COPY';
+    copyBtn.onclick = () => {
+      navigator.clipboard.writeText(generatedFiles[name]);
+      copyBtn.textContent = 'COPIED!';
+      setTimeout(()=>copyBtn.textContent='COPY', 1500);
+    };
+
+    const dlBtn = document.createElement('button');
+    dlBtn.className = 'btn-download';
+    dlBtn.textContent = 'SAVE';
+    dlBtn.onclick = () => downloadText(name.split('/').pop(), generatedFiles[name]);
+
+    content.appendChild(copyBtn);
+    content.appendChild(dlBtn);
+    content.appendChild(code);
+    contentsEl.appendChild(content);
+  });
+
+  document.getElementById('outputSection').classList.add('show');
+  document.getElementById('outputSection').scrollIntoView({behavior:'smooth', block:'start'});
+
+  // Wire up ZIP download button
+  document.getElementById('downloadZipBtn').onclick = downloadAllAsZip;
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function syntaxHighlight(yaml) {
+  return yaml
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/^(  *)([\w_]+)(:)(?=\s|$)/gm, '$1<span class="yaml-key">$2</span>$3')
+    .replace(/:\s+(true|false)/g, ': <span class="yaml-bool">$1</span>')
+    .replace(/:\s+(\d+)/g, ': <span class="yaml-num">$1</span>')
+    .replace(/^(#.*)$/gm, '<span class="yaml-comment">$1</span>');
+}
+
+function toTitle(str) {
+  return str.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
+}
+
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
+  return (bytes/1024/1024).toFixed(1) + ' MB';
+}
+
+function sleep(ms) { return new Promise(r=>setTimeout(r,ms)); }
+
+function downloadText(filename, text) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text],{type:'text/plain'}));
+  a.download = filename;
+  a.click();
+}
+
+async function downloadAllAsZip() {
+  const btn = document.getElementById('downloadZipBtn');
+  btn.textContent = '⏳ PACKING...';
+  btn.disabled = true;
+
+  const zip = new JSZip();
+  const namespace = document.getElementById('namespace').value || 'my_pack';
+
+  for (const [path, content] of Object.entries(generatedFiles)) {
+    zip.file(path, content);
+  }
+
+  const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = namespace + '_configs.zip';
+  a.click();
+
+  btn.textContent = '✓ DOWNLOADED!';
+  setTimeout(() => {
+    btn.textContent = '⬇ DOWNLOAD ALL AS ZIP';
+    btn.disabled = false;
+  }, 2000);
+}
+</script>
+</body>
+</html>
